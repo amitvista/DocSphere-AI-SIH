@@ -1,0 +1,17 @@
+/* src/index.css */
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #0d1117;
+    color: #c9d1d9;
+}
+.glass-card {
+    background: rgba(22, 27, 34, 0.6);
+    backdrop-filter: blur(12px);
+    /* ... all other custom styles from your <style> block go here ... */
+}
+/* ... etc ... */
+.sidebar-link.active, .sidebar-link:hover {
+    background-color: #313438;
+    color: white;
+    border-left-color: #8b5cf6;
+}
