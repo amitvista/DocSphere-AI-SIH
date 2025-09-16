@@ -1,5 +1,7 @@
+// src/App.jsx
 import React, { useEffect, useState } from "react";
 import "./index.css";
+import AuthFlow from "./components/AuthFlow"; // <-- make sure this file exists
 
 const FEATURES = [
   {
@@ -50,6 +52,7 @@ const TESTIMONIALS = [
 
 export default function App() {
   const [openModal, setOpenModal] = useState(false);
+  const [openAuth, setOpenAuth] = useState(false); // NEW: controls full auth flow
   const [activeStep, setActiveStep] = useState(null);
   const [tIndex, setTIndex] = useState(0);
 
@@ -77,6 +80,28 @@ export default function App() {
     return () => obs.disconnect();
   }, []);
 
+  // callback when auth completes successfully
+  function handleAuthSuccess(user) {
+    console.log("Authenticated user:", user);
+    // close the auth UI (you may want to redirect to dashboard here)
+    setOpenAuth(false);
+    // TODO: set token / update app-level auth state / redirect to dashboard
+  }
+
+  // close auth without success (passed to AuthFlow if you implement an onClose prop later)
+  function handleAuthClose() {
+    setOpenAuth(false);
+  }
+
+  // If auth flow is open, render it full-screen and skip landing content
+  if (openAuth) {
+    return (
+      <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#0f1724,#0b1220)" }}>
+        <AuthFlow onAuthSuccess={handleAuthSuccess} onClose={handleAuthClose} />
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       {/* NAV */}
@@ -95,7 +120,15 @@ export default function App() {
           <a href="#tech">Tech</a>
 
           {/* Green authentication button (explicit selector in CSS ensures green color) */}
-          <a className="btn-auth" href="#auth">Go to Authentication</a>
+          <button
+            className="btn-auth"
+            onClick={() => {
+              // open auth flow (replaces landing with AuthFlow)
+              setOpenAuth(true);
+            }}
+          >
+            Go to Authentication
+          </button>
         </nav>
       </header>
 
@@ -115,7 +148,13 @@ export default function App() {
           </p>
 
           <div className="hero-actions">
-            <button className="btn btn-primary" onClick={() => setOpenModal(true)}>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                // open auth flow (Get Started)
+                setOpenAuth(true);
+              }}
+            >
               Get Started
             </button>
             <button
@@ -323,7 +362,13 @@ export default function App() {
           </div>
 
           <div>
-            <button className="btn btn-primary" onClick={() => setOpenModal(true)}>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                // open auth flow
+                setOpenAuth(true);
+              }}
+            >
               Get Started
             </button>
           </div>
@@ -340,7 +385,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* MODAL */}
+      {/* MODAL (Invite) */}
       {openModal && (
         <div className="modal" role="dialog" aria-modal="true">
           <div className="modal-panel reveal">
