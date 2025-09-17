@@ -1,46 +1,76 @@
 // src/components/AuthFlow.jsx
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import ReactDOM from "react-dom";
 import "./AuthFlow.css";
 
 /**
- * Updated AuthFlow:
- * - addOfficer stores officer object with password
- * - submitOrganization validates org + each officer (password length >= 6)
- * - requires at least one officer (changeable)
+ * AuthFlow - Updated full file (test officers removed)
+ *
+ * Drop this file in as src/components/AuthFlow.jsx (replace existing).
  */
 
 export default function AuthFlow({ onAuthSuccess, onClose }) {
   const [step, setStep] = useState("choice");
+
+  // Organization
   const [orgName, setOrgName] = useState("");
   const [domain, setDomain] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
 
+  // Officer creation
+  const OFFICER_TYPES = [
+    "HR officer",
+    "Finance officer",
+    "Engineering officer",
+    "Safety & Compliance Officer",
+    "Legal officer",
+    "Operations Officer (Station/Depot)",
+  ];
   const [offName, setOffName] = useState("");
   const [offEmail, setOffEmail] = useState("");
-  const [offRole, setOffRole] = useState("HR");
+  const [offRole, setOffRole] = useState(OFFICER_TYPES[0]);
   const [offPassword, setOffPassword] = useState("");
   const [officers, setOfficers] = useState([]);
 
+  // Login
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [selectedOfficerId, setSelectedOfficerId] = useState("");
 
+  // UI
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const roles = ["HR", "Finance", "Legal", "IT", "Manager"];
+  // Persist officers to localStorage for dev/testing convenience
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("dev_officers");
+      if (raw) setOfficers(JSON.parse(raw));
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("dev_officers", JSON.stringify(officers));
+    } catch (e) {
+      // ignore
+    }
+  }, [officers]);
+
+  function resetErrors() {
+    setError("");
+  }
 
   function fakeNetworkCall(payload = {}) {
     return new Promise((resolve, reject) => {
       setTimeout(() => {
         if (payload?.adminEmail === "fail@example.com") return reject(new Error("Server rejected admin email"));
         resolve({ ok: true, payload });
-      }, 700);
+      }, 650);
     });
-  }
-
-  function resetErrors() {
-    setError("");
   }
 
   function validateOrg() {
@@ -70,12 +100,11 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
       return false;
     }
     if (offPassword.length < 6) {
-      setError("Officer password must be at least 6 characters.");
+      setError("Password must be at least 6 characters.");
       return false;
     }
-    // prevent duplicate officer emails
     if (officers.some((o) => o.email.toLowerCase() === offEmail.toLowerCase())) {
-      setError("An officer with this email was already added.");
+      setError("An officer with this email is already added.");
       return false;
     }
     setError("");
@@ -86,45 +115,40 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     if (!validateOfficerInput()) return;
 
     const newOfficer = {
-      id: Date.now(),
+      id: String(Date.now()),
       name: offName.trim(),
       email: offEmail.trim(),
       role: offRole,
-      password: offPassword, // store for submission (hashed server-side later)
+      password: offPassword,
     };
 
     setOfficers((s) => [...s, newOfficer]);
-
-    // clear inputs
     setOffName("");
     setOffEmail("");
     setOffPassword("");
-    setOffRole("HR");
+    setOffRole(OFFICER_TYPES[0]);
     setError("");
   }
 
   function removeOfficer(id) {
     setOfficers((s) => s.filter((o) => o.id !== id));
+    if (selectedOfficerId === id) {
+      setSelectedOfficerId("");
+      setLoginEmail("");
+    }
   }
 
   async function submitOrganization() {
-    // step 1: validate org fields
     if (!validateOrg()) return;
-
-    // step 2: ensure at least one officer (optional requirement)
     if (officers.length === 0) {
       setError("Please add at least one officer before continuing.");
       return;
     }
-
-    // step 3: validate each officer has required password length (should already be enforced on addOfficer)
-    const badOfficer = officers.find((o) => !o.password || o.password.length < 6);
-    if (badOfficer) {
-      setError(`Officer ${badOfficer.email} has an invalid password (min 6 chars).`);
+    const bad = officers.find((o) => !o.password || o.password.length < 6);
+    if (bad) {
+      setError(`Officer ${bad.email} must have a password at least 6 characters.`);
       return;
     }
-
-    // All good — call registration endpoint (fake here)
     setLoading(true);
     setError("");
     try {
@@ -132,17 +156,14 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
         orgName: orgName.trim(),
         domain: domain.trim(),
         admin: { email: adminEmail.trim(), password: adminPassword },
-        officers: officers.map(({ id, password, ...rest }) => ({ ...rest, password })), // send name,email,role,password
+        officers: officers.map(({ password, ...rest }) => ({ ...rest, password })),
       };
-
       await fakeNetworkCall(payload);
-
       setLoading(false);
-      // on success -> show success screen
       setStep("success");
     } catch (err) {
       setLoading(false);
-      setError(err?.message || "Registration failed. Try again.");
+      setError(err?.message || "Registration failed.");
     }
   }
 
@@ -156,6 +177,7 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     try {
       await fakeNetworkCall({ type: isAdmin ? "adminLogin" : "officerLogin", loginEmail });
       setLoading(false);
+      setLoginPassword("");
       onAuthSuccess?.({ email: loginEmail, isAdmin });
     } catch (err) {
       setLoading(false);
@@ -163,19 +185,51 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     }
   }
 
+  // Sync selected officer -> loginEmail
+  useEffect(() => {
+    if (!selectedOfficerId) return;
+    const found = officers.find((o) => o.id === selectedOfficerId);
+    if (found) setLoginEmail(found.email);
+  }, [selectedOfficerId, officers]);
+
+  // Clear selection if officer removed
+  useEffect(() => {
+    if (!selectedOfficerId) return;
+    const stillExists = officers.some((o) => o.id === selectedOfficerId);
+    if (!stillExists) {
+      setSelectedOfficerId("");
+      setLoginEmail("");
+    }
+  }, [officers, selectedOfficerId]);
+
+  function handleOfficerSelect(id) {
+    setSelectedOfficerId(id);
+    if (!id) {
+      setLoginEmail("");
+      return;
+    }
+    const o = officers.find((x) => x.id === id);
+    if (o) setLoginEmail(o.email);
+  }
+
   return (
-    <div className="auth-outer">
+    <div className="auth-outer" role="dialog" aria-modal="true" aria-labelledby="auth-main-title">
       <div className="auth-card">
-        <div className="auth-pills">
+        <div className="auth-pills" role="tablist" aria-label="Authentication steps">
           <button
-            onClick={() => { setStep("org"); resetErrors(); }}
             className={`auth-pill ${["org", "officers", "success"].includes(step) ? "active" : ""}`}
+            onClick={() => { setStep("org"); resetErrors(); }}
+            role="tab"
+            aria-selected={["org", "officers", "success"].includes(step)}
           >
             Organization Registration
           </button>
+
           <button
-            onClick={() => { setStep("loginChoice"); resetErrors(); }}
             className={`auth-pill ${["loginChoice", "adminLogin", "officerLogin"].includes(step) ? "active" : ""}`}
+            onClick={() => { setStep("loginChoice"); resetErrors(); }}
+            role="tab"
+            aria-selected={["loginChoice", "adminLogin", "officerLogin"].includes(step)}
           >
             Login
           </button>
@@ -183,7 +237,7 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
 
         {step === "choice" && (
           <div className="auth-choice">
-            <h2>Welcome</h2>
+            <h2 id="auth-main-title">Welcome</h2>
             <p>Get started by registering your organization or logging in.</p>
             <div className="auth-choice-buttons">
               <button className="auth-btn-primary" onClick={() => setStep("org")}>Get Started →</button>
@@ -195,20 +249,16 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
         {step === "org" && (
           <>
             <h1 className="auth-title">Organization Registration</h1>
-
             <label className="auth-label">Organization Name</label>
             <input className="auth-input" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="Acme Corp" />
-
             <label className="auth-label">Domain</label>
             <input className="auth-input" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="acme.com" />
-
             <label className="auth-label">Admin Email</label>
             <input className="auth-input" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="admin@company.com" />
-
             <label className="auth-label">Password</label>
             <input className="auth-input" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="Min 6 characters" />
 
-            {error && <div className="auth-error">{error}</div>}
+            {error && <div className="auth-error" role="alert">{error}</div>}
 
             <div className="auth-row">
               <button className="auth-btn-outline" onClick={() => setStep("choice")}>← Back</button>
@@ -224,28 +274,39 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
             <input className="auth-input" placeholder="Name" value={offName} onChange={(e) => setOffName(e.target.value)} />
             <input className="auth-input" placeholder="Email" value={offEmail} onChange={(e) => setOffEmail(e.target.value)} />
 
-            <div className="auth-row">
-              <select className="auth-input" value={offRole} onChange={(e) => setOffRole(e.target.value)}>
-                {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+            <div className="auth-row split">
+              <select className="auth-input auth-select" value={offRole} onChange={(e) => setOffRole(e.target.value)}>
+                {OFFICER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
               <input className="auth-input" placeholder="Password" type="password" value={offPassword} onChange={(e) => setOffPassword(e.target.value)} />
             </div>
 
-            <button className="auth-btn-green" onClick={addOfficer}>+ Add Officer</button>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button className="auth-btn-green add-officer" onClick={addOfficer}>+ Add Officer</button>
+              {/* Test officer helper removed per request */}
+            </div>
 
             <div style={{ marginTop: 16 }}>
               <h3>Current Officers</h3>
               {officers.length === 0 && <div className="auth-muted">No officers yet.</div>}
+
               {officers.map((o) => (
                 <div key={o.id} className="auth-officer-row">
-                  <span>{o.name} ({o.role})</span>
-                  <span>{o.email}</span>
-                  <button className="auth-btn-remove" onClick={() => removeOfficer(o.id)}>Remove</button>
+                  <div className="officer-meta">
+                    <div className="officer-name">{o.name}</div>
+                    <div className="officer-role">{o.role}</div>
+                  </div>
+
+                  <div className="officer-email">{o.email}</div>
+
+                  <div className="officer-actions">
+                    <button className="auth-btn-remove" onClick={() => removeOfficer(o.id)}>Remove</button>
+                  </div>
                 </div>
               ))}
             </div>
 
-            {error && <div className="auth-error">{error}</div>}
+            {error && <div className="auth-error" role="alert">{error}</div>}
 
             <div className="auth-row">
               <button className="auth-btn-outline" onClick={() => setStep("org")}>← Back</button>
@@ -282,10 +343,10 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
             <h1 className="auth-title">Admin Login</h1>
             <input className="auth-input" placeholder="Admin Email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} />
             <input className="auth-input" placeholder="Password" type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} />
-            {error && <div className="auth-error">{error}</div>}
+            {error && <div className="auth-error" role="alert">{error}</div>}
             <div className="auth-row">
               <button className="auth-btn-outline" onClick={() => setStep("loginChoice")}>← Back</button>
-              <button className="auth-btn-primary" onClick={() => submitLogin(true)}>Login →</button>
+              <button className="auth-btn-primary" onClick={() => submitLogin(true)} disabled={loading}>{loading ? "Logging in..." : "Login →"}</button>
             </div>
           </>
         )}
@@ -293,16 +354,208 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
         {step === "officerLogin" && (
           <>
             <h1 className="auth-title">Officer Login</h1>
-            <input className="auth-input" placeholder="Officer Email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} />
-            <input className="auth-input" placeholder="Password" type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} />
-            {error && <div className="auth-error">{error}</div>}
+
+            {/* Dropdown or fallback hint */}
+            <div className="custom-select-wrapper">
+              <label className="auth-label">Choose Officer</label>
+
+              {officers.length === 0 ? (
+                <div className="auth-muted" style={{ marginBottom: 8 }}>
+                  No officers found — type officer email below to login manually or add officers first.
+                </div>
+              ) : (
+                <OfficerDropdown
+                  items={officers}
+                  value={selectedOfficerId}
+                  onChange={(id) => handleOfficerSelect(id)}
+                  placeholder="-- Select Officer --"
+                />
+              )}
+            </div>
+
+            <input
+              className="auth-input"
+              placeholder="Officer Email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              readOnly={Boolean(selectedOfficerId)}
+            />
+
+            <input
+              className="auth-input"
+              placeholder="Password"
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+            />
+
+            {error && <div className="auth-error" role="alert">{error}</div>}
+
             <div className="auth-row">
               <button className="auth-btn-outline" onClick={() => setStep("loginChoice")}>← Back</button>
-              <button className="auth-btn-primary" onClick={() => submitLogin(false)}>Login →</button>
+              <button className="auth-btn-primary" onClick={() => submitLogin(false)} disabled={loading}>{loading ? "Logging in..." : "Login →"}</button>
             </div>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* -------------------------
+  OfficerDropdown (Portal) component
+  - appends menu to document.body to avoid clipping
+  - keyboard navigation: ArrowUp/Down, Enter/Space, Escape
+  - disabled visual when no items (handled by parent)
+---------------------------*/
+function OfficerDropdown({ items = [], value = "", onChange = () => {}, placeholder = "-- Select --" }) {
+  const [open, setOpen] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [menuStyle, setMenuStyle] = useState({ top: 0, left: 0, width: 0 });
+  const wrapperRef = useRef(null);
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+
+  // compute and set menu position
+  function computeMenuPosition() {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const top = rect.bottom + window.scrollY + 8; // 8px gap
+    const left = rect.left + window.scrollX;
+    const width = rect.width;
+    setMenuStyle({ top, left, width });
+  }
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target) && !menuRef.current?.contains(e.target)) {
+        setOpen(false);
+        setFocusedIndex(-1);
+      }
+    }
+    function onScrollOrResize() {
+      if (open) computeMenuPosition();
+    }
+    document.addEventListener("click", onDocClick);
+    window.addEventListener("resize", onScrollOrResize);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    return () => {
+      document.removeEventListener("click", onDocClick);
+      window.removeEventListener("resize", onScrollOrResize);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      computeMenuPosition();
+      setFocusedIndex(items.length ? 0 : -1);
+    } else {
+      setFocusedIndex(-1);
+    }
+  }, [open, items.length]);
+
+  const selected = items.find((i) => i.id === value);
+
+  function toggle() {
+    if (items.length === 0) {
+      // visually disable is handled by parent; do nothing
+      return;
+    }
+    setOpen((s) => !s);
+  }
+
+  function onSelect(id) {
+    onChange(id);
+    setOpen(false);
+    setFocusedIndex(-1);
+    triggerRef.current?.focus();
+  }
+
+  function onKeyDown(e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (!open) return setOpen(true);
+      if (focusedIndex >= 0 && items[focusedIndex]) onSelect(items[focusedIndex].id);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setFocusedIndex((i) => Math.min(i + 1, items.length - 1));
+      scrollFocusedIntoView();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFocusedIndex((i) => Math.max(i - 1, 0));
+      scrollFocusedIntoView();
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setFocusedIndex(-1);
+      triggerRef.current?.focus();
+    }
+  }
+
+  function scrollFocusedIntoView() {
+    setTimeout(() => {
+      const menu = menuRef.current;
+      if (!menu) return;
+      const focused = menu.querySelectorAll('.custom-item')[focusedIndex];
+      if (focused) focused.scrollIntoView({ block: 'nearest' });
+    }, 0);
+  }
+
+  // portal menu (appended to body)
+  const menu = open ? ReactDOM.createPortal(
+    <div
+      ref={menuRef}
+      className={`custom-menu open`}
+      style={{
+        position: 'absolute',
+        top: menuStyle.top + 'px',
+        left: menuStyle.left + 'px',
+        width: menuStyle.width + 'px',
+        zIndex: 2147483647
+      }}
+      role="listbox"
+    >
+      {items.length === 0 && <div className="custom-empty">No officers available</div>}
+      {items.map((it, idx) => (
+        <div
+          key={it.id}
+          role="option"
+          aria-selected={it.id === value}
+          className={`custom-item ${it.id === value ? 'selected' : ''} ${focusedIndex === idx ? 'focused' : ''}`}
+          onClick={() => onSelect(it.id)}
+          onMouseEnter={() => setFocusedIndex(idx)}
+          tabIndex={-1}
+        >
+          <div className="item-left">
+            <div className="item-name">{it.name}</div>
+            <div className="item-role">{it.role}</div>
+          </div>
+          <div className="item-email">{it.email}</div>
+        </div>
+      ))}
+    </div>,
+    document.body
+  ) : null;
+
+  return (
+    <div className="custom-select" ref={wrapperRef}>
+      <button
+        type="button"
+        ref={triggerRef}
+        className={`custom-select-trigger ${items.length === 0 ? 'disabled' : ''}`}
+        onClick={toggle}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-disabled={items.length === 0}
+        onKeyDown={onKeyDown}
+      >
+        <span className="custom-selected-text">{selected ? `${selected.name} — ${selected.role}` : placeholder}</span>
+        <span className={`custom-arrow ${open ? "open" : ""}`} aria-hidden />
+      </button>
+
+      {menu}
     </div>
   );
 }
