@@ -1,4 +1,4 @@
-/* Full updated CSS — paste into src/index.css (overwrite) */
+﻿/* Full updated CSS — paste into src/index.css (overwrite) */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
 
 :root {
@@ -223,7 +223,3 @@ body {
   .features-grid { grid-template-columns:1fr; }
   .mock-dashboard { min-height:320px; }
 }
-
-
-
-
