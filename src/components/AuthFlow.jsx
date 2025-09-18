@@ -1,12 +1,14 @@
 // src/components/AuthFlow.jsx
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthProvider";
 import "./AuthFlow.css";
 
 /**
- * AuthFlow - Updated full file (test officers removed)
- *
- * Drop this file in as src/components/AuthFlow.jsx (replace existing).
+ * AuthFlow - full file (updated)
+ * - saves authenticated user to AuthProvider (login)
+ * - redirects HR users to /hr using useNavigate
  */
 
 export default function AuthFlow({ onAuthSuccess, onClose }) {
@@ -42,7 +44,9 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Persist officers to localStorage for dev/testing convenience
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem("dev_officers");
@@ -167,6 +171,7 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     }
   }
 
+  // UPDATED submitLogin: writes to AuthProvider and navigates
   async function submitLogin(isAdmin = true) {
     if (!loginEmail || !loginPassword) {
       setError("Enter email and password.");
@@ -178,7 +183,46 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
       await fakeNetworkCall({ type: isAdmin ? "adminLogin" : "officerLogin", loginEmail });
       setLoading(false);
       setLoginPassword("");
-      onAuthSuccess?.({ email: loginEmail, isAdmin });
+
+      // Determine role and name for the user object
+      let role = isAdmin ? "admin" : "staff";
+      let name = loginEmail.split("@")[0];
+
+      if (!isAdmin) {
+        const foundOfficer = officers.find((o) => o.email.toLowerCase() === loginEmail.toLowerCase());
+        if (foundOfficer) {
+          name = foundOfficer.name || name;
+          role = /hr/i.test(foundOfficer.role) ? "hr" : "staff";
+        } else {
+          role = /hr/i.test(loginEmail) ? "hr" : "staff";
+        }
+      } else {
+        if (/hr/i.test(loginEmail)) role = "hr";
+      }
+
+      const user = {
+        name,
+        email: loginEmail,
+        role,
+        orgName: orgName || undefined,
+      };
+
+      // Save in AuthProvider
+      try {
+        login(user);
+      } catch (e) {
+        console.warn("AuthProvider.login failed", e);
+      }
+
+      // Backwards compatibility callback
+      onAuthSuccess?.(user);
+
+      // Redirect based on role
+      if (role === "hr") {
+        navigate("/hr", { replace: true });
+      } else {
+        navigate("/", { replace: true });
+      }
     } catch (err) {
       setLoading(false);
       setError(err?.message || "Login failed");
@@ -283,7 +327,6 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
 
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <button className="auth-btn-green add-officer" onClick={addOfficer}>+ Add Officer</button>
-              {/* Test officer helper removed per request */}
             </div>
 
             <div style={{ marginTop: 16 }}>
@@ -355,7 +398,6 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
           <>
             <h1 className="auth-title">Officer Login</h1>
 
-            {/* Dropdown or fallback hint */}
             <div className="custom-select-wrapper">
               <label className="auth-label">Choose Officer</label>
 
@@ -402,12 +444,7 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
   );
 }
 
-/* -------------------------
-  OfficerDropdown (Portal) component
-  - appends menu to document.body to avoid clipping
-  - keyboard navigation: ArrowUp/Down, Enter/Space, Escape
-  - disabled visual when no items (handled by parent)
----------------------------*/
+/* ------------------------- OfficerDropdown (unchanged) ------------------------- */
 function OfficerDropdown({ items = [], value = "", onChange = () => {}, placeholder = "-- Select --" }) {
   const [open, setOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
@@ -416,12 +453,11 @@ function OfficerDropdown({ items = [], value = "", onChange = () => {}, placehol
   const triggerRef = useRef(null);
   const menuRef = useRef(null);
 
-  // compute and set menu position
   function computeMenuPosition() {
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const top = rect.bottom + window.scrollY + 8; // 8px gap
+    const top = rect.bottom + window.scrollY + 8;
     const left = rect.left + window.scrollX;
     const width = rect.width;
     setMenuStyle({ top, left, width });
@@ -459,10 +495,7 @@ function OfficerDropdown({ items = [], value = "", onChange = () => {}, placehol
   const selected = items.find((i) => i.id === value);
 
   function toggle() {
-    if (items.length === 0) {
-      // visually disable is handled by parent; do nothing
-      return;
-    }
+    if (items.length === 0) return;
     setOpen((s) => !s);
   }
 
@@ -503,7 +536,6 @@ function OfficerDropdown({ items = [], value = "", onChange = () => {}, placehol
     }, 0);
   }
 
-  // portal menu (appended to body)
   const menu = open ? ReactDOM.createPortal(
     <div
       ref={menuRef}
