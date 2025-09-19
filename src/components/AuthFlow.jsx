@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
+import { authService } from "../services/api";
 import "./AuthFlow.css";
 
 /**
@@ -144,88 +145,76 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
 
   async function submitOrganization() {
     if (!validateOrg()) return;
-    if (officers.length === 0) {
-      setError("Please add at least one officer before continuing.");
-      return;
-    }
-    const bad = officers.find((o) => !o.password || o.password.length < 6);
-    if (bad) {
-      setError(`Officer ${bad.email} must have a password at least 6 characters.`);
-      return;
-    }
     setLoading(true);
     setError("");
+
     try {
-      const payload = {
-        orgName: orgName.trim(),
-        domain: domain.trim(),
-        admin: { email: adminEmail.trim(), password: adminPassword },
-        officers: officers.map(({ password, ...rest }) => ({ ...rest, password })),
+      // Call the registration API
+      const registrationData = {
+        organization: orgName,
+        domain,
+        email: adminEmail,
+        password: adminPassword,
+        name: "Admin User", // You might want to add a name field to your form
+        role: "admin",
       };
-      await fakeNetworkCall(payload);
+
+      const response = await authService.register(registrationData);
+
+      if (response.success) {
+        // Auto-login the user after registration
+        const loginResult = await login({
+          email: adminEmail,
+          password: adminPassword,
+        });
+
+        if (loginResult.success) {
+          // Move to officers step
+          setStep("officers");
+        } else {
+          setError("Registration successful but login failed. Please try logging in.");
+        }
+      } else {
+        setError(response.error || "Registration failed. Please try again.");
+      }
+    } catch (error) {
+      console.error("Registration error:", error);
+      setError(error?.message || "An error occurred during registration. Please try again.");
+    } finally {
       setLoading(false);
-      setStep("success");
-    } catch (err) {
-      setLoading(false);
-      setError(err?.message || "Registration failed.");
     }
   }
 
-  // UPDATED submitLogin: writes to AuthProvider and navigates
-  async function submitLogin(isAdmin = true) {
-    if (!loginEmail || !loginPassword) {
-      setError("Enter email and password.");
-      return;
-    }
+  // Handle login submission
+  const handleLogin = async (e) => {
+    e.preventDefault();
     setLoading(true);
     setError("");
+
     try {
-      await fakeNetworkCall({ type: isAdmin ? "adminLogin" : "officerLogin", loginEmail });
-      setLoading(false);
-      setLoginPassword("");
-
-      // Determine role and name for the user object
-      let role = isAdmin ? "admin" : "staff";
-      let name = loginEmail.split("@")[0];
-
-      if (!isAdmin) {
-        const foundOfficer = officers.find((o) => o.email.toLowerCase() === loginEmail.toLowerCase());
-        if (foundOfficer) {
-          name = foundOfficer.name || name;
-          role = /hr/i.test(foundOfficer.role) ? "hr" : "staff";
-        } else {
-          role = /hr/i.test(loginEmail) ? "hr" : "staff";
-        }
-      } else {
-        if (/hr/i.test(loginEmail)) role = "hr";
-      }
-
-      const user = {
-        name,
+      // Call the login API
+      const credentials = {
         email: loginEmail,
-        role,
-        orgName: orgName || undefined,
+        password: loginPassword,
       };
 
-      // Save in AuthProvider
-      try {
-        login(user);
-      } catch (e) {
-        console.warn("AuthProvider.login failed", e);
-      }
+      const result = await login(credentials);
 
-      // Backwards compatibility callback
-      onAuthSuccess?.(user);
+      if (result.success) {
+        // Redirect based on user role
+        const redirectPath = result.user.role === "hr" ? "/hr" : "/";
+        navigate(redirectPath);
 
-      // Redirect based on role
-      if (role === "hr") {
-        navigate("/hr", { replace: true });
+        // Call the success callback if provided
+        if (onAuthSuccess) onAuthSuccess();
       } else {
-        navigate("/", { replace: true });
+        setError(result.error || "Login failed. Please check your credentials.");
       }
-    } catch (err) {
+    } catch (error) {
+      console.error("Login error:", error);
+      setError(error?.message || "An error occurred during login. Please try again.");
+    } finally {
       setLoading(false);
-      setError(err?.message || "Login failed");
     }
   }
 
@@ -352,8 +341,20 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
             {error && <div className="auth-error" role="alert">{error}</div>}
 
             <div className="auth-row">
-              <button className="auth-btn-outline" onClick={() => setStep("org")}>← Back</button>
-              <button className="auth-btn-primary" onClick={submitOrganization} disabled={loading}>
+              <button 
+                type="button"
+                className="auth-btn-outline" 
+                onClick={() => setStep("org")}
+                disabled={loading}
+              >
+                ← Back
+              </button>
+              <button 
+                type="button"
+                className="auth-btn-primary" 
+                onClick={submitOrganization} 
+                disabled={loading}
+              >
                 {loading ? "Registering..." : "Done →"}
               </button>
             </div>
@@ -382,20 +383,46 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
         )}
 
         {step === "adminLogin" && (
-          <>
+          <form onSubmit={handleLogin}>
             <h1 className="auth-title">Admin Login</h1>
-            <input className="auth-input" placeholder="Admin Email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} />
-            <input className="auth-input" placeholder="Password" type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} />
+            <input 
+              className="auth-input" 
+              placeholder="Admin Email" 
+              type="email"
+              value={loginEmail} 
+              onChange={(e) => setLoginEmail(e.target.value)} 
+              required
+            />
+            <input 
+              className="auth-input" 
+              placeholder="Password" 
+              type="password" 
+              value={loginPassword} 
+              onChange={(e) => setLoginPassword(e.target.value)}
+              required
+            />
             {error && <div className="auth-error" role="alert">{error}</div>}
             <div className="auth-row">
-              <button className="auth-btn-outline" onClick={() => setStep("loginChoice")}>← Back</button>
-              <button className="auth-btn-primary" onClick={() => submitLogin(true)} disabled={loading}>{loading ? "Logging in..." : "Login →"}</button>
+              <button 
+                type="button" 
+                className="auth-btn-outline" 
+                onClick={() => setStep("loginChoice")}
+              >
+                ← Back
+              </button>
+              <button 
+                type="submit" 
+                className="auth-btn-primary" 
+                disabled={loading}
+              >
+                {loading ? "Logging in..." : "Login →"}
+              </button>
             </div>
-          </>
+          </form>
         )}
 
         {step === "officerLogin" && (
-          <>
+          <form onSubmit={handleLogin}>
             <h1 className="auth-title">Officer Login</h1>
 
             <div className="custom-select-wrapper">
@@ -418,9 +445,11 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
             <input
               className="auth-input"
               placeholder="Officer Email"
+              type="email"
               value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)}
               readOnly={Boolean(selectedOfficerId)}
+              required
             />
 
             <input
@@ -429,15 +458,28 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
               type="password"
               value={loginPassword}
               onChange={(e) => setLoginPassword(e.target.value)}
+              required
             />
 
             {error && <div className="auth-error" role="alert">{error}</div>}
 
             <div className="auth-row">
-              <button className="auth-btn-outline" onClick={() => setStep("loginChoice")}>← Back</button>
-              <button className="auth-btn-primary" onClick={() => submitLogin(false)} disabled={loading}>{loading ? "Logging in..." : "Login →"}</button>
+              <button 
+                type="button"
+                className="auth-btn-outline" 
+                onClick={() => setStep("loginChoice")}
+              >
+                ← Back
+              </button>
+              <button 
+                type="submit" 
+                className="auth-btn-primary" 
+                disabled={loading}
+              >
+                {loading ? "Logging in..." : "Login →"}
+              </button>
             </div>
-          </>
+          </form>
         )}
       </div>
     </div>

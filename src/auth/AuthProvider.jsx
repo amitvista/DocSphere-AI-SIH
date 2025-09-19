@@ -1,5 +1,6 @@
 // src/auth/AuthProvider.jsx
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { authService } from "../services/api";
 
 /**
  * Simple AuthProvider
@@ -28,15 +29,53 @@ export function AuthProvider({ children }) {
     }
   }, [user]);
 
-  function login(userData) {
-    setUser(userData);
+  async function login(credentials) {
+    try {
+      const userData = await authService.login(credentials);
+      setUser(userData);
+      return { success: true };
+    } catch (error) {
+      console.error('Login failed:', error);
+      return { success: false, error };
+    }
   }
 
-  function logout() {
-    setUser(null);
+  async function logout() {
+    try {
+      await authService.logout();
+    } catch (error) {
+      console.error('Logout failed:', error);
+    } finally {
+      setUser(null);
+    }
   }
 
-  return <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>;
+  // Check if user is logged in on initial load
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        const userData = await authService.getCurrentUser();
+        if (userData) {
+          setUser(userData);
+        }
+      } catch (error) {
+        console.error('Auth check failed:', error);
+      }
+    };
+
+    checkAuthStatus();
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ 
+      user, 
+      login, 
+      logout,
+      isAuthenticated: !!user
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {
