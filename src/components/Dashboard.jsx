@@ -14,17 +14,72 @@ function formatBytes(bytes) {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
+
+/* --------- REPLACED: more tolerant role normalizer --------- */
 function normalizeRoleLabel(label) {
   if (!label) return "";
   const v = String(label).trim().toLowerCase();
-  if (v.includes("admin")) return "admin";
-  if (v.includes("hr")) return "hr";
-  if (v.includes("finance")) return "finance";
-  if (v.includes("engineer")) return "engineer";
-  if (v.includes("safety")) return "safety";
-  if (v.includes("legal")) return "legal";
-  if (v.includes("operation") || v.includes("operations") || v.includes("station") || v.includes("depot")) return "operations";
-  return v.split(/\s+/)[0] || v;
+
+  // HR / People synonyms
+  if (
+    v.includes("hr") ||
+    v.includes("human") ||
+    v.includes("people") ||
+    v.includes("talent") ||
+    v.includes("people ops") ||
+    v.includes("human resources") ||
+    v.includes("peopleops") ||
+    v.includes("people-ops")
+  ) {
+    return "hr";
+  }
+
+  // finance-like
+  if (v.includes("finance") || v.includes("accounts") || v.includes("accounting") || v.includes("payroll")) {
+    return "finance";
+  }
+
+  // engineering/dev
+  if (v.includes("engineer") || v.includes("developer") || v.includes("dev") || v.includes("software")) {
+    return "engineer";
+  }
+
+  // safety
+  if (v.includes("safety") || v.includes("ehs") || v.includes("safety officer")) {
+    return "safety";
+  }
+
+  // legal
+  if (v.includes("legal") || v.includes("law") || v.includes("counsel")) {
+    return "legal";
+  }
+
+  // operations
+  if (v.includes("operation") || v.includes("operations") || v.includes("station") || v.includes("depot") || v.includes("ops")) {
+    return "operations";
+  }
+
+  // admin/system
+  if (v.includes("admin") || v.includes("administrator") || v.includes("sysadmin") || v.includes("it admin")) {
+    return "admin";
+  }
+
+  // If the label is a list / CSV, prefer the first meaningful token
+  const words = v.split(/[,;|\/\s-]+/).filter(Boolean);
+  if (words.length === 0) return "";
+  // If it looks like "officer hr" or "hr officer", pick the hr mapped value
+  for (const w of words) {
+    if (["hr", "human", "people", "talent"].some((x) => w.includes(x))) return "hr";
+    if (["finance", "accounts", "payroll"].some((x) => w.includes(x))) return "finance";
+    if (["engineer", "developer", "dev"].some((x) => w.includes(x))) return "engineer";
+    if (["safety", "ehs"].some((x) => w.includes(x))) return "safety";
+    if (["legal", "counsel"].some((x) => w.includes(x))) return "legal";
+    if (["operation", "ops", "depot", "station"].some((x) => w.includes(x))) return "operations";
+    if (["admin", "administrator", "sysadmin"].some((x) => w.includes(x))) return "admin";
+  }
+
+  // fallback to the first token
+  return words[0];
 }
 
 /* Dashboard */
@@ -32,7 +87,15 @@ export default function Dashboard() {
   const auth = typeof useAuth === "function" ? useAuth() : null;
   const { user = null, logout = () => {} } = auth || {};
 
-  const roleSlug = (user?.roleSlug || normalizeRoleLabel(user?.role || user?.post || "") || "hr").toLowerCase();
+  /* --------- REPLACED: safer roleSlug derivation + debug --------- */
+  // If your backend provides user.roles as an array, prefer that; else try roleSlug/role/post/title
+  const roleFromArray = Array.isArray(user?.roles) ? (user.roles.find((r) => typeof r === "string" && r.length) || null) : null;
+  const rawRoleSource = user?.roleSlug ?? roleFromArray ?? user?.role ?? user?.post ?? user?.title ?? "";
+  const roleSlug = (rawRoleSource ? normalizeRoleLabel(rawRoleSource) : (user?.isAdmin ? "admin" : "hr")).toLowerCase();
+
+  // Debug: inspect user object & derived roleSlug when troubleshooting officer login
+  console.info("DBG user object:", user, "rawRoleSource:", rawRoleSource, "derived roleSlug:", roleSlug);
+
   const profile = { name: user?.name || user?.email || "Officer", roleDisplay: user?.post || user?.role || roleSlug.toUpperCase() };
 
   const DATA_TYPES = useMemo(() => {
@@ -596,5 +659,85 @@ function Modal({ children, onClose }) {
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal card-elev">{children}</div>
     </div>
+  );
+}
+
+/* ---------------- Hero for officer dashboards ---------------- */
+function Hero({ profile, roleSlug, onInject, onExplore }) {
+  return (
+    <section className="hero card-elev">
+      <div className="pill">Welcome — {roleSlug.toUpperCase()}</div>
+      <h1 className="hero-title">
+        Hello, <span className="accent">{profile.name}</span>
+      </h1>
+      <p className="muted">
+        This is your {roleSlug} dashboard. Use the buttons below to manage your workflows.
+      </p>
+      <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+        <button onClick={onInject} className="btn-cta">Inject Data</button>
+        <button onClick={onExplore} className="btn-ghost">Explore Dashboard</button>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- HowToUse (small helper panel) ---------------- */
+function HowToUse({ roleSlug }) {
+  const roleNotes = {
+    hr: "Inject resumes and contracts; approve onboarding tasks.",
+    engineer: "Upload design docs and ticket attachments; check sprint status.",
+    finance: "Upload invoices and receipts; review approvals.",
+    legal: "Upload contracts and NDAs; manage review queue.",
+    safety: "Upload incident reports and safety certificates.",
+    operations: "Manage depot/station docs and staffing records.",
+  };
+
+  return (
+    <section className="how-to">
+      <div className="how-main">
+        <div className="how-card card-elev">
+          <h2>{roleSlug?.toUpperCase()} — Quick Start</h2>
+          <p className="muted">{roleNotes[roleSlug] || "Use the dashboard to manage your workflows."}</p>
+
+          <div className="info-grid" style={{ marginTop: 12 }}>
+            <div className="info-card">
+              <div className="info-icon">📤</div>
+              <div><div className="info-title">Inject Documents</div><div className="info-desc">Upload role-relevant documents quickly.</div></div>
+            </div>
+            <div className="info-card">
+              <div className="info-icon">✅</div>
+              <div><div className="info-title">Review & Approve</div><div className="info-desc">See pending approvals in one place.</div></div>
+            </div>
+            <div className="info-card">
+              <div className="info-icon">🔍</div>
+              <div><div className="info-title">Explore</div><div className="info-desc">Explore role-specific cards and insights.</div></div>
+            </div>
+            <div className="info-card">
+              <div className="info-icon">🤖</div>
+              <div><div className="info-title">Chat with AI</div><div className="info-desc">Ask DocSphere AI to find missing docs or generate content.</div></div>
+            </div>
+          </div>
+
+          <div className="tip-box" style={{ marginTop: 12 }}>
+            <h3>Tips</h3>
+            <ul style={{ marginTop: 8 }}>
+              <li>Use "Inject Data" for bulk uploads; verify parsed fields before submit.</li>
+              <li>Keep high-priority panels visible — approvals and incidents first.</li>
+              <li>Use the Chat assistant to generate policy text or find missing documents quickly.</li>
+            </ul>
+          </div>
+        </div>
+
+        <aside className="how-aside card-elev" style={{ width: 300 }}>
+          <h3>Getting started checklist</h3>
+          <ol>
+            <li>Inject at least one document relevant to your role.</li>
+            <li>Review any pending items.</li>
+            <li>Open the directory / projects and confirm assigned owners.</li>
+            <li>Chat with DocSphere AI for a quick audit of missing items.</li>
+          </ol>
+        </aside>
+      </div>
+    </section>
   );
 }
