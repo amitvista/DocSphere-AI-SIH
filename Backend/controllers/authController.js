@@ -19,7 +19,26 @@ exports.registerUser = async (req, res) => {
       token: generateToken(user._id, user.role),
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Registration error:', error);
+    if (error.name === 'ValidationError') {
+      // Handle mongoose validation errors
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        message: 'Validation failed',
+        errors: errors 
+      });
+    } else if (error.code === 11000) {
+      // Handle duplicate key error (e.g., duplicate email)
+      return res.status(400).json({ 
+        message: 'Email already exists',
+        field: 'email'
+      });
+    }
+    // For other types of errors
+    res.status(500).json({ 
+      message: 'Registration failed',
+      error: error.message 
+    });
   }
 };
 
