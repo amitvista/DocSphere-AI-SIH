@@ -2,12 +2,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { authService } from "../services/api";
 
-/**
- * Simple AuthProvider
- * - login(user) sets the user object in context (and localStorage for persistence)
- * - logout() clears the user
- */
-
 const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
@@ -20,10 +14,14 @@ export function AuthProvider({ children }) {
     }
   });
 
+  // Keep localStorage in sync
   useEffect(() => {
     try {
-      if (user) localStorage.setItem("ds_user", JSON.stringify(user));
-      else localStorage.removeItem("ds_user");
+      if (user) {
+        localStorage.setItem("ds_user", JSON.stringify(user));
+      } else {
+        localStorage.removeItem("ds_user");
+      }
     } catch {
       // ignore storage errors
     }
@@ -33,9 +31,9 @@ export function AuthProvider({ children }) {
     try {
       const userData = await authService.login(credentials);
       setUser(userData);
-      return { success: true };
+      return { success: true, user: userData };
     } catch (error) {
-      console.error('Login failed:', error);
+      console.error("Login failed:", error);
       return { success: false, error };
     }
   }
@@ -44,22 +42,27 @@ export function AuthProvider({ children }) {
     try {
       await authService.logout();
     } catch (error) {
-      console.error('Logout failed:', error);
+      console.error("Logout failed:", error);
     } finally {
       setUser(null);
     }
   }
 
-  // Check if user is logged in on initial load
+  // Validate token & get user on initial load
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {
-        const userData = await authService.getCurrentUser();
-        if (userData) {
-          setUser(userData);
+        const raw = localStorage.getItem("ds_user");
+        if (!raw) return; // no user saved, skip
+
+        const current = await authService.getCurrentUser();
+        if (current) {
+          setUser((prev) => ({ ...prev, ...current }));
         }
       } catch (error) {
-        console.error('Auth check failed:', error);
+        console.error("Auth check failed:", error);
+        localStorage.removeItem("ds_user");
+        setUser(null);
       }
     };
 
@@ -67,12 +70,14 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      login, 
-      logout,
-      isAuthenticated: !!user
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        logout,
+        isAuthenticated: !!user,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

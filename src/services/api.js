@@ -1,9 +1,9 @@
 // src/services/api.js
-const API_BASE_URL = '/api';
+const API_BASE_URL = "/api";
 
 // Helper function to handle API responses
 async function handleResponse(response) {
-  const data = await response.json();
+  const data = await response.json().catch(() => null);
   if (!response.ok) {
     const error = (data && data.message) || response.statusText;
     return Promise.reject(error);
@@ -11,55 +11,60 @@ async function handleResponse(response) {
   return data;
 }
 
-// Authentication API calls
+function getTokenFromStorage() {
+  try {
+    const raw = localStorage.getItem("ds_user");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export const authService = {
-  // Register a new user
   register: async (userData) => {
     const response = await fetch(`${API_BASE_URL}/auth/register`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(userData),
-      credentials: 'include',
     });
-    return handleResponse(response);
+    const data = await handleResponse(response);
+    // Save returned user + token
+    try { localStorage.setItem("ds_user", JSON.stringify(data)); } catch {}
+    return data;
   },
 
-  // Login user
   login: async (credentials) => {
     const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
-      credentials: 'include',
     });
-    return handleResponse(response);
+    const data = await handleResponse(response);
+    try { localStorage.setItem("ds_user", JSON.stringify(data)); } catch {}
+    return data;
   },
 
-  // Get current user
   getCurrentUser: async () => {
+    const token = getTokenFromStorage();
+    if (!token) throw new Error("No token found");
     const response = await fetch(`${API_BASE_URL}/auth/me`, {
       method: 'GET',
-      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
       },
     });
     return handleResponse(response);
   },
 
-  // Logout user
   logout: async () => {
-    // Note: This is a client-side logout. The server should invalidate the token.
-    // You might want to add a server-side logout endpoint if needed.
+    try { localStorage.removeItem("ds_user"); } catch {}
     return Promise.resolve();
   },
 };
 
-// Add more API services as needed
 export default {
   auth: authService,
 };
