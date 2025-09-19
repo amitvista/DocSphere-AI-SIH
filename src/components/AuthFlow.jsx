@@ -8,9 +8,35 @@ import "./AuthFlow.css";
 
 /**
  * AuthFlow - full file (updated)
- * - saves authenticated user to AuthProvider (login)
- * - redirects HR users to /hr using useNavigate
+ * - normalizes role names into role slugs
+ * - saves officers with roleSlug for consistent routing/permission checks
+ * - redirects all successful logins to /dashboard (single adaptive dashboard)
+ * - defensive handling of login/register responses to avoid JSON parse/runtime issues
  */
+
+const OFFICER_TYPES = [
+  "HR officer",
+  "Finance officer",
+  "Engineering officer",
+  "Safety & Compliance Officer",
+  "Legal officer",
+  "Operations Officer (Station/Depot)",
+];
+
+// Map various display strings -> canonical role slugs used by the app
+function normalizeRoleLabel(label) {
+  if (!label) return "";
+  const v = String(label).trim().toLowerCase();
+  if (v.includes("hr")) return "hr";
+  if (v.includes("finance")) return "finance";
+  if (v.includes("engineer")) return "engineer";
+  if (v.includes("safety")) return "safety";
+  if (v.includes("legal")) return "legal";
+  if (v.includes("operation")) return "operations";
+  // fallback: use sanitized last word or original
+  const words = v.split(/\s+/);
+  return words[words.length - 1] || v;
+}
 
 export default function AuthFlow({ onAuthSuccess, onClose }) {
   const [step, setStep] = useState("choice");
@@ -22,14 +48,6 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
   const [adminPassword, setAdminPassword] = useState("");
 
   // Officer creation
-  const OFFICER_TYPES = [
-    "HR officer",
-    "Finance officer",
-    "Engineering officer",
-    "Safety & Compliance Officer",
-    "Legal officer",
-    "Operations Officer (Station/Depot)",
-  ];
   const [offName, setOffName] = useState("");
   const [offEmail, setOffEmail] = useState("");
   const [offRole, setOffRole] = useState(OFFICER_TYPES[0]);
@@ -53,7 +71,8 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
       const raw = localStorage.getItem("dev_officers");
       if (raw) setOfficers(JSON.parse(raw));
     } catch (e) {
-      // ignore
+      // ignore broken data
+      console.warn("Could not parse saved dev_officers", e);
     }
   }, []);
 
@@ -61,7 +80,8 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     try {
       localStorage.setItem("dev_officers", JSON.stringify(officers));
     } catch (e) {
-      // ignore
+      // ignore quota errors
+      console.warn("Could not persist dev_officers", e);
     }
   }, [officers]);
 
@@ -119,11 +139,14 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
   function addOfficer() {
     if (!validateOfficerInput()) return;
 
+    const roleSlug = normalizeRoleLabel(offRole);
+
     const newOfficer = {
       id: String(Date.now()),
       name: offName.trim(),
       email: offEmail.trim(),
-      role: offRole,
+      role: offRole, // human-friendly label
+      roleSlug, // canonical role for routing/permissions
       password: offPassword,
     };
 
@@ -149,33 +172,41 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     setError("");
 
     try {
-      // Call the registration API
+      // Call the registration API (if available)
       const registrationData = {
         organization: orgName,
         domain,
         email: adminEmail,
         password: adminPassword,
-        name: "Admin User", // You might want to add a name field to your form
+        name: "Admin User",
         role: "admin",
       };
 
-      const response = await authService.register(registrationData);
+      // If you don't have a real backend yet, authService.register can be stubbed
+      const response = await (authService && authService.register
+        ? authService.register(registrationData)
+        : fakeNetworkCall(registrationData));
 
-      if (response.success) {
-        // Auto-login the user after registration
-        const loginResult = await login({
-          email: adminEmail,
-          password: adminPassword,
-        });
+      // Defensive: response may vary; check shape
+      const ok = response && (response.success === true || response.ok === true);
+      if (ok) {
+        // Attempt to auto-login the admin
+        try {
+          const loginResult = await (login
+            ? login({ email: adminEmail, password: adminPassword })
+            : Promise.resolve({ success: true, user: { email: adminEmail, role: "admin", name: "Admin User" } }));
 
-        if (loginResult.success) {
-          // Move to officers step
-          setStep("officers");
-        } else {
-          setError("Registration successful but login failed. Please try logging in.");
+          if (loginResult && loginResult.success) {
+            setStep("officers");
+          } else {
+            setError(loginResult?.error || "Registration succeeded but login failed. Please login manually.");
+          }
+        } catch (le) {
+          console.error("Auto-login failed", le);
+          setError("Registration completed but auto-login failed. Please login manually.");
         }
       } else {
-        setError(response.error || "Registration failed. Please try again.");
+        setError(response?.error || "Registration failed. Please try again.");
       }
     } catch (error) {
       console.error("Registration error:", error);
@@ -192,23 +223,28 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     setError("");
 
     try {
-      // Call the login API
       const credentials = {
         email: loginEmail,
         password: loginPassword,
       };
 
-      const result = await login(credentials);
+      // Use login from AuthProvider (it should return { success, user, error })
+      const result = await (login ? login(credentials) : Promise.resolve({ success: false, error: "No auth provider" }));
 
-      if (result.success) {
-        // Redirect based on user role
-        const redirectPath = result.user.role === "hr" ? "/hr" : "/";
-        navigate(redirectPath);
+      // Defensive checks for returned shape
+      if (result && result.success) {
+        // ensure we have a role slug available
+        const user = result.user || {};
+        if (!user.role) {
+          console.warn("Login returned user without role - dashboard will still open, but behavior may be limited.");
+        }
 
-        // Call the success callback if provided
+        // Redirect to single adaptive dashboard for front-end-first approach
+        navigate("/dashboard");
+
         if (onAuthSuccess) onAuthSuccess();
       } else {
-        setError(result.error || "Login failed. Please check your credentials.");
+        setError(result?.error || "Login failed. Please check your credentials.");
       }
     } catch (error) {
       console.error("Login error:", error);
@@ -216,7 +252,7 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   // Sync selected officer -> loginEmail
   useEffect(() => {
@@ -294,8 +330,21 @@ export default function AuthFlow({ onAuthSuccess, onClose }) {
             {error && <div className="auth-error" role="alert">{error}</div>}
 
             <div className="auth-row">
-              <button className="auth-btn-outline" onClick={() => setStep("choice")}>← Back</button>
-              <button className="auth-btn-green" onClick={() => setStep("officers")}>Next: Officers →</button>
+              <button 
+                type="button"
+                className="auth-btn-outline" 
+                onClick={() => setStep("choice")}
+                disabled={loading}
+              >
+                ← Back
+              </button>
+              <button 
+                type="button"
+                className="auth-btn-green" 
+                onClick={() => setStep("officers")}
+              >
+                Next: Officers →
+              </button>
             </div>
           </>
         )}

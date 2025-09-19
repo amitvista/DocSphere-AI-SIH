@@ -5,18 +5,22 @@ import { useAuth } from "./auth/AuthProvider";
 import LandingPage from "./components/LandingPage";
 
 /**
- * App: landing shell. When user requests auth, navigate to /auth.
- * If already logged-in HR user exists in context, redirect to /hr.
+ * App: landing shell.
+ * - If a logged-in user exists, redirect to /dashboard.
+ * - LandingPage calls onOpenAuth to navigate to /auth.
  */
 export default function App() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
 
   React.useEffect(() => {
-    if (user?.role === "hr") {
-      navigate("/hr", { replace: true });
+    if (loading) return;
+    if (user) {
+      navigate("/dashboard", { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, loading, navigate]);
+
+  if (loading) return null;
 
   return <LandingPage onOpenAuth={() => navigate("/auth")} />;
 }
