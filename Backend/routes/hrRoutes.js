@@ -3,49 +3,74 @@ const express = require("express");
 const Employee = require("../models/employee");
 const Attendance = require("../models/attendance");
 const Payroll = require("../models/payroll");
+const OCRResult = require("../models/ocrResult");   // ✅ import OCR model
 const { protect } = require("../middleware/auth");
 const authorize = require("../middleware/roles");
 
 const router = express.Router();
 
-// Add new employee (HR or Admin only)
-router.post("/employee", protect, authorize("hr", "admin"), async (req, res) => {
+/**
+ * 📌 1. Upload OCR result for HR validation
+ */
+router.post("/ocr", protect, authorize("hr", "admin"), async (req, res) => {
   try {
-    const employee = await Employee.create(req.body);
-    res.status(201).json(employee);
+    const { rawText, parsedJson, suggestedCollection } = req.body;
+
+    const result = await OCRResult.create({
+      rawText,
+      parsedJson,
+      suggestedCollection,
+      uploadedBy: req.user._id
+    });
+
+    res.status(201).json({ message: "OCR result uploaded", result });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// Get all employees (Admin sees all, HR sees all, others see only self)
-router.get("/employees", protect, async (req, res) => {
-  let employees;
-  if (req.user.role === "admin" || req.user.role === "hr") {
-    employees = await Employee.find();
-  } else {
-    employees = await Employee.find({ employeeId: req.user.employeeId });
-  }
-  res.json(employees);
-});
-
-// Mark attendance (HR or Admin)
-router.post("/attendance", protect, authorize("hr", "admin"), async (req, res) => {
+/**
+ * 📌 2. Get all OCR results for HR review
+ */
+router.get("/ocr-results", protect, authorize("hr", "admin"), async (req, res) => {
   try {
-    const record = await Attendance.create(req.body);
-    res.status(201).json(record);
+    const results = await OCRResult.find().populate("uploadedBy", "name role email");
+    res.json(results);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Add payroll entry (HR or Admin)
-router.post("/payroll", protect, authorize("hr", "admin"), async (req, res) => {
+/**
+ * 📌 3. Approve an OCR result → Insert into Employee collection
+ */
+router.post("/ocr/approve/:id", protect, authorize("hr", "admin"), async (req, res) => {
   try {
-    const payroll = await Payroll.create(req.body);
-    res.status(201).json(payroll);
+    const ocr = await OCRResult.findById(req.params.id);
+    if (!ocr) return res.status(404).json({ error: "OCR result not found" });
+
+    // Example: If suggested collection is "employee"
+    if (ocr.suggestedCollection === "employee" && ocr.parsedJson) {
+      const employee = await Employee.create(ocr.parsedJson);
+      return res.json({ message: "OCR approved and added to Employees", employee });
+    }
+
+    res.status(400).json({ error: "Unsupported OCR type or missing parsed data" });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
-module.exports = router; 
+
+/**
+ * 📌 4. Reject OCR result
+ */
+router.delete("/ocr/reject/:id", protect, authorize("hr", "admin"), async (req, res) => {
+  try {
+    await OCRResult.findByIdAndDelete(req.params.id);
+    res.json({ message: "OCR result rejected & removed" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;

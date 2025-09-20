@@ -344,9 +344,13 @@ export default function Dashboard() {
       )}
 
       {/* Full-screen Chat (ChatGPT-like) */}
-       {modal && modal.type === "chat" &&
-       ReactDOM.createPortal(
-       <ChatFullScreen onClose={() => setModal(null)} />,document.body)}
+      {modal && modal.type === "chat" &&
+  ReactDOM.createPortal(
+    <ChatFullScreen onClose={() => setModal(null)} roleSlug={roleSlug} />,
+    document.body
+  )
+}
+
 
 
       {/* Toast */}
@@ -852,8 +856,43 @@ function OfficerHome({ roleSlug, profile, openChat, onInject, onExplore, injecte
   );
 }
 
-/* ---------------- Inject View (unchanged look) ---------------- */
-function InjectView({ DATA_TYPES, injectedData, handleFileAdd, removeInjected, submitInjected, totalUploaded, totalSize, formatBytes }) {
+/* ---------------- Inject View (enhanced with OCR) ---------------- */
+import api from "../services/api";
+
+function InjectView({
+  DATA_TYPES,
+  injectedData,
+  handleFileAdd,
+  removeInjected,
+  submitInjected,
+  totalUploaded,
+  totalSize,
+  formatBytes,
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [ocrResponse, setOcrResponse] = useState(null);
+  const [error, setError] = useState("");
+
+  const sendToOCR = async () => {
+    const files = Object.values(injectedData).flat();
+    if (files.length === 0) {
+      setError("No files selected");
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      // Upload the first file (extend later to loop all)
+      const result = await api.ocr.upload(files[0].file);
+      setOcrResponse(result.data);
+      console.log("OCR result:", result.data);
+    } catch (err) {
+      setError(err.message || "OCR failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <section className="inject-view">
       <div className="inject-main">
@@ -868,7 +907,13 @@ function InjectView({ DATA_TYPES, injectedData, handleFileAdd, removeInjected, s
 
                 <label className="upload-btn" aria-label={`Upload ${t}`}>
                   Upload
-                  <input onChange={(e) => handleFileAdd(t, e.target.files)} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.docx,.csv" className="hidden" />
+                  <input
+                    onChange={(e) => handleFileAdd(t, e.target.files)}
+                    type="file"
+                    multiple
+                    accept=".pdf,.jpg,.jpeg,.png,.docx,.csv"
+                    className="hidden"
+                  />
                 </label>
               </div>
 
@@ -887,7 +932,11 @@ function InjectView({ DATA_TYPES, injectedData, handleFileAdd, removeInjected, s
                         </div>
                       </div>
                       <div className="file-actions">
-                        <button onClick={() => removeInjected(t, f.id)} className="btn-small btn-danger" aria-label={`Remove ${f.filename}`}>
+                        <button
+                          onClick={() => removeInjected(t, f.id)}
+                          className="btn-small btn-danger"
+                          aria-label={`Remove ${f.filename}`}
+                        >
                           Remove
                         </button>
                       </div>
@@ -904,33 +953,42 @@ function InjectView({ DATA_TYPES, injectedData, handleFileAdd, removeInjected, s
           <div className="summary-meta muted">
             Files: <strong>{totalUploaded}</strong> — Size: <strong>{formatBytes(totalSize)}</strong>
           </div>
-          <div className="summary-list">
-            {Object.entries(injectedData).flatMap(([type, arr]) =>
-              (arr || []).map((f) => (
-                <div key={f.id} className="summary-row">
-                  <div className="file-name">[{type}] {f.filename}</div>
-                  <button onClick={() => removeInjected(type, f.id)} className="btn-small btn-danger">
-                    Remove
-                  </button>
-                </div>
-              ))
-            )}
-            {totalUploaded === 0 && <div className="muted">No files to submit</div>}
-          </div>
 
-          <button onClick={submitInjected} className="btn-cta mt" disabled={totalUploaded === 0}>
+          <button
+            onClick={submitInjected}
+            className="btn-cta mt"
+            disabled={totalUploaded === 0}
+          >
             Stage Files
           </button>
+
+          <button
+            onClick={sendToOCR}
+            className="btn-primary mt"
+            disabled={totalUploaded === 0 || uploading}
+          >
+            {uploading ? "Processing OCR…" : "Send to OCR"}
+          </button>
+
+          {error && <div className="muted" style={{ color: "red" }}>{error}</div>}
+          {ocrResponse && (
+            <pre style={{ marginTop: 12, background: "#111", color: "#0f0", padding: 12 }}>
+              {JSON.stringify(ocrResponse, null, 2)}
+            </pre>
+          )}
         </div>
       </div>
 
       <aside className="help-aside card-elev">
         <h3>Help & Formats</h3>
-        <div className="muted">Supported: PDF, JPG, PNG, DOCX, CSV. We extract key fields automatically.</div>
+        <div className="muted">
+          Supported: PDF, JPG, PNG, DOCX, CSV. We extract key fields automatically.
+        </div>
       </aside>
     </section>
   );
 }
+
 
 /* ---------------- Explore View (unchanged look) ---------------- */
 function ExploreView({ DASH_CARDS, openChat }) {
@@ -961,33 +1019,66 @@ function ExploreView({ DASH_CARDS, openChat }) {
 }
 
 /* ---------------- Full-screen Chat (ChatGPT-like) ---------------- */
-function ChatFullScreen({ onClose }) {
+function ChatFullScreen({ onClose, roleSlug }) {
   const topics = ["General", "Onboarding", "Leave Requests", "Payroll", "Documents"];
   const [activeTopic, setActiveTopic] = useState("General");
   const [messages, setMessages] = useState(() => {
     const init = {};
     topics.forEach((t) => {
-      init[t] = [{ from: "ai", text: t === "General" ? "Hello — DocSphere AI at your service." : `Welcome to ${t}` }];
+      init[t] = [
+        { from: "ai", text: t === "General" ? "Hello — DocSphere AI at your service." : `Welcome to ${t}` }
+      ];
     });
     return init;
   });
+
   const inputRef = useRef(null);
   const chatBodyRef = useRef(null);
 
-  const send = () => {
+  // ✅ make send async
+  const send = async () => {
     const text = inputRef.current?.value;
     if (!text?.trim()) return;
-    setMessages((m) => ({ ...m, [activeTopic]: [...(m[activeTopic] || []), { from: "user", text }] }));
+
+    setMessages((m) => ({
+      ...m,
+      [activeTopic]: [...(m[activeTopic] || []), { from: "user", text }]
+    }));
     inputRef.current.value = "";
-    setTimeout(() => setMessages((m) => ({ ...m, [activeTopic]: [...(m[activeTopic] || []), { from: "ai", text: "Mock reply — try asking for 'missing docs'." }] })), 700);
-    setTimeout(() => {
-      if (chatBodyRef.current) chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
-    }, 200);
+
+    try {
+      const res = await fetch("http://localhost:5000/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          role: roleSlug,   // ✅ pass roleSlug from Dashboard
+          topic: activeTopic
+        })
+      });
+
+      const data = await res.json();
+      const reply = data.reply || "⚠ AI did not respond.";
+
+      setMessages((m) => ({
+        ...m,
+        [activeTopic]: [...(m[activeTopic] || []), { from: "ai", text: reply }]
+      }));
+    } catch (err) {
+      console.error("Chat error:", err);
+      setMessages((m) => ({
+        ...m,
+        [activeTopic]: [...(m[activeTopic] || []), { from: "ai", text: "⚠ Error connecting to AI backend." }]
+      }));
+    }
   };
 
+  // ✅ scroll effect runs whenever messages update
   useEffect(() => {
-    if (chatBodyRef.current) chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
-  }, []);
+    if (chatBodyRef.current) {
+      chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
+    }
+  }, [messages, activeTopic]);
 
   return (
     <div className="chat-modal-full" role="dialog" aria-modal="true" aria-label="DocSphere AI chat full">
@@ -998,9 +1089,7 @@ function ChatFullScreen({ onClose }) {
             <div className="muted">Ask questions, run audits, or request missing documents</div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button className="btn-ghost" onClick={onClose}>
-              Close
-            </button>
+            <button className="btn-ghost" onClick={onClose}>Close</button>
           </div>
         </div>
 
@@ -1009,12 +1098,15 @@ function ChatFullScreen({ onClose }) {
             <div className="chat-left-head muted">Topics</div>
             <div className="chat-topics">
               {topics.map((t) => (
-                <button key={t} className={`topic-btn ${t === activeTopic ? "active" : ""}`} onClick={() => setActiveTopic(t)}>
+                <button
+                  key={t}
+                  className={`topic-btn ${t === activeTopic ? "active" : ""}`}
+                  onClick={() => setActiveTopic(t)}
+                >
                   {t}
                 </button>
               ))}
             </div>
-            <div className="chat-left-footer muted">Quick commands: "list missing docs"</div>
           </aside>
 
           <section className="chat-center">
@@ -1027,23 +1119,17 @@ function ChatFullScreen({ onClose }) {
             </div>
 
             <div className="chat-compose">
-              <input ref={inputRef} placeholder={`Message ${activeTopic}`} aria-label={`Message ${activeTopic}`} onKeyDown={(e) => { if (e.key === "Enter") send(); }} />
-              <button className="btn-cta" onClick={send}>
-                Send
-              </button>
+              <input
+                ref={inputRef}
+                placeholder={`Message ${activeTopic}`}
+                aria-label={`Message ${activeTopic}`}
+                onKeyDown={(e) => { if (e.key === "Enter") send(); }}
+              />
+              <button className="btn-cta" onClick={send}>Send</button>
             </div>
           </section>
         </div>
       </div>
-    </div>
-  );
-}
-
-/* Modal wrapper */
-function Modal({ children, onClose }) {
-  return (
-    <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal card-elev">{children}</div>
     </div>
   );
 }

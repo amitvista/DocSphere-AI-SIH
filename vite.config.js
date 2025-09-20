@@ -11,6 +11,8 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         ws: true,
+        timeout: 60000,      // ⏱️ increase request timeout to 60s
+        proxyTimeout: 60000, // ⏱️ proxy idle timeout (for long OCR tasks)
       }
     }
   },
