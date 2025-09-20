@@ -857,7 +857,7 @@ function OfficerHome({ roleSlug, profile, openChat, onInject, onExplore, injecte
 }
 
 /* ---------------- Inject View (enhanced with OCR) ---------------- */
-import api from "../services/api";
+import api, { ocrService } from "../services/api";
 
 function InjectView({
   DATA_TYPES,
@@ -883,7 +883,7 @@ function InjectView({
     setError("");
     try {
       // Upload the first file (extend later to loop all)
-      const result = await api.ocr.upload(files[0].file);
+      const result = await ocrService.upload(files[0].file);
       setOcrResponse(result.data);
       console.log("OCR result:", result.data);
     } catch (err) {

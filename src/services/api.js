@@ -70,7 +70,7 @@ export const authService = {
   },
 };
 
-// OCR service
+// ✅ OCR service
 export const ocrService = {
   upload: async (file) => {
     const token = getTokenFromStorage();
@@ -90,7 +90,11 @@ export const ocrService = {
   },
 };
 
-export default {
+// ✅ Unified export (makes both work)
+const api = {
   auth: authService,
   ocr: ocrService,
+  ocrService, // alias so both `api.ocr` and `ocrService` named import work
 };
+
+export default api;
